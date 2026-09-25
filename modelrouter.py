@@ -12,7 +12,7 @@ reasoning stage classified the request, which makes the router's verdict an
 explicit user-intent override rather than decoration.
 """
 
-import os
+import os 
 
 # Must be set before the Needle agent is constructed.
 os.environ.setdefault("NEEDLE_TELEMETRY", "0")

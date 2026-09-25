@@ -16,7 +16,7 @@ from pathlib import Path
 import config
 
 
-SCHEMA = """
+SCHEMA = """ 
 CREATE TABLE IF NOT EXISTS documents (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
     source     TEXT NOT NULL,
