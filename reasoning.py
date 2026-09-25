@@ -2,13 +2,12 @@
 
 Given a user prompt (optionally backed by a vision description) this stage:
   1. retrieves relevant entries from the local knowledge base,
-  2. consults the web through OpenRouter's web plugin,
+  2. optionally consults the web through a local search adapter,
   3. produces an end-to-end summary,
   4. decides whether the user wants an answer or working code.
 
-Retrieval runs locally and the hits are injected into the prompt. Only the web
-search is server-side, because that plugin returns real url_citation records
-rather than URLs the model typed from memory.
+Retrieval runs locally and the hits are injected into the prompt. Web results
+are also injected with their source URLs.
 """
 
 import argparse
@@ -19,6 +18,7 @@ import sys
 import config
 import knowledge
 import llm
+import websearch
 
 
 class ReasoningError(llm.LLMError):
@@ -90,7 +90,7 @@ def _guess_intent(prompt):
 
 
 # ============================================================
-# OPENROUTER
+# OLLAMA
 # ============================================================
 
 def _call_model(messages, use_web=True, max_tokens=None):
@@ -98,11 +98,10 @@ def _call_model(messages, use_web=True, max_tokens=None):
     # catch - only ReasoningError. Converting here means a timeout surfaces as a
     # clean message instead of a traceback from the router.
     try:
-        return llm.openrouter_chat(
+        return llm.ollama_chat(
             messages,
             model=config.REASONING_MODEL,
             max_tokens=max_tokens,
-            plugins=[{"id": "web"}] if use_web else None,
         )
 
     except llm.LLMError as error:
@@ -169,7 +168,9 @@ def _normalise(parsed, annotations, raw):
 # PROMPT ASSEMBLY
 # ============================================================
 
-def _build_user_message(prompt, image_description=None, knowledge_context=""):
+def _build_user_message(
+    prompt, image_description=None, knowledge_context="", web_context=""
+):
     sections = []
 
     if image_description:
@@ -185,6 +186,13 @@ def _build_user_message(prompt, image_description=None, knowledge_context=""):
             "LOCAL KNOWLEDGE BASE EXCERPTS\n"
             "Organization-specific material. Prefer it for anything it covers.\n\n"
             f"{knowledge_context}"
+        )
+
+    if web_context:
+        sections.append(
+            "WEB SEARCH RESULTS\n"
+            "Use these retrieved results for current facts and cite their URLs.\n\n"
+            f"{web_context}"
         )
 
     sections.append(f"USER REQUEST\n{prompt}")
@@ -215,6 +223,7 @@ def reason(
         raise ReasoningError("A prompt is required.")
 
     knowledge_context = ""
+    web_results = websearch.search(prompt, limit=5, log=log) if use_web else []
 
     if use_knowledge:
         query = " ".join(part for part in (prompt, image_description) if part)
@@ -231,7 +240,10 @@ def reason(
         {
             "role": "user",
             "content": _build_user_message(
-                prompt, image_description, knowledge_context
+                prompt,
+                image_description,
+                knowledge_context,
+                websearch.format_results(web_results),
             ),
         },
     ]
@@ -263,10 +275,15 @@ def reason(
             "summary": content,
             "problem_statement": "",
             "language": "",
-            "sources": llm.citation_urls(annotations),
+            "sources": [item["url"] for item in web_results]
+            + llm.citation_urls(annotations),
         }
 
-    return _normalise(parsed, annotations, content)
+    result = _normalise(parsed, annotations, content)
+    result["sources"] = list(
+        dict.fromkeys([item["url"] for item in web_results] + result["sources"])
+    )
+    return result
 
 
 def _print_result(result):

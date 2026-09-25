@@ -18,7 +18,7 @@ ROLE:
 You are a senior software engineer, technical analyst and
 enterprise knowledge assistant.
 
-CORE BEHAVIOR: 
+CORE BEHAVIOR:
 1. Analyze the user's requirement before answering.
 2. Break complex problems into logical steps.
 3. Produce accurate, practical and production-quality solutions.
@@ -57,12 +57,7 @@ references when necessary.
 
 
 def check_api_key():
-    try:
-        config.openrouter_api_keys()
-
-    except RuntimeError as error:
-        print(f"\n[ERROR] {error}")
-        sys.exit(1)
+    return True
 
 
 def build_document_context(text):
@@ -84,12 +79,12 @@ def build_document_context(text):
 
 def call_model(messages):
     try:
-        data = llm.openrouter_chat(messages, model=MODEL)
+        data = llm.ollama_chat(messages, model=MODEL)
         response, _, _ = llm.extract_message(data)
         return response or None
 
     except llm.LLMError as error:
-        print(f"[ERROR] OpenRouter request failed: {error}")
+        print(f"[ERROR] Ollama request failed: {error}")
 
         return None
 

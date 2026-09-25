@@ -12,7 +12,7 @@ reasoning stage classified the request, which makes the router's verdict an
 explicit user-intent override rather than decoration.
 """
 
-import os 
+import os
 
 # Must be set before the Needle agent is constructed.
 os.environ.setdefault("NEEDLE_TELEMETRY", "0")
@@ -42,7 +42,7 @@ DEFAULT_IMAGE_PROMPT = (
 @needle.tool
 def select_model(task_type: Literal["coding", "reasoning", "vision"]):
     """
-    Select the correct AI model  for the user's task.
+    Select the correct AI model for the user's task.
 
     Args:
         task_type:
@@ -129,6 +129,19 @@ def run(image_path=None, prompt="", use_web=True, log=print):
     else:
         if not prompt:
             raise ValueError("Provide an image path or a prompt.")
+
+        local_answer = knowledge.answer_local(prompt, log=log)
+        if local_answer:
+            log("[knowledge] answered locally; model router not needed")
+            return {
+                "route": "knowledge",
+                "intent": "query",
+                "summary": local_answer,
+                "problem_statement": "",
+                "language": "",
+                "sources": [],
+                "image_description": None,
+            }
 
         route = route_text(prompt, log=log)
         log(f"[router] needle selected: {route}")
@@ -224,7 +237,7 @@ def banner():
     print("            SOVEREIGN AI WORKBENCH")
     print("               NEEDLE ROUTER")
     print("=" * 60)
-    print(f"Vision:    {' -> '.join(config.VISION_OPENROUTER_MODELS)}")
+    print(f"Vision:    {config.VISION_MODEL}")
     print(f"Reasoning: {config.REASONING_MODEL}")
     print(f"Coding:    {config.CODING_MODEL}")
     print(f"Knowledge: {knowledge.document_count()} document(s)")

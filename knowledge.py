@@ -1,3 +1,4 @@
+
 """Local knowledge base for the reasoning stage.
 
 SQLite with an FTS5 index. Retrieval happens here in Python and the hits are
@@ -16,7 +17,7 @@ from pathlib import Path
 import config
 
 
-SCHEMA = """ 
+SCHEMA = """
 CREATE TABLE IF NOT EXISTS documents (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
     source     TEXT NOT NULL,
@@ -119,11 +120,7 @@ def _fts_expression(text):
     asterisks and parentheses are FTS5 operators and raise OperationalError.
     Each word is quoted as a literal prefix query and OR-ed together. Prefix
     matching matters because FTS5 does no stemming: without it a search for
-    "product" would not find a document containing "products".
-
-    The match is one-directional. The query must be a prefix of the stored
-    token, never the other way round: "product"* finds "products", but
-    "products"* does not find "product".
+    "products" would not find a document containing only "product".
     """
     terms = re.findall(r"[0-9A-Za-z_]+", text)
 

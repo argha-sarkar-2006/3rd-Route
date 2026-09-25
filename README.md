@@ -4,9 +4,9 @@ A multi-stage AI workbench that routes and processes tasks across vision analysi
 
 ## Pipeline Architecture
 
-- Vision Stage: Analyzes images, diagrams, and error screenshots with a free OpenRouter vision model.
-- Reasoning Stage: Performs local RAG on ingested documents and live web search via OpenRouter to produce structured technical specifications.
-- Coding Stage: Implements working solutions from specifications using Ollama Cloud.
+- Vision Stage: Analyzes images, diagrams, and error screenshots with local `qwen3.5:2b`.
+- Reasoning Stage: Performs local RAG and best-effort web search with local `qwen3.5:2b`.
+- Coding Stage: Implements working solutions with local `aikid123/qwen3-coder:0.6b`.
 - Router: Automatically determines task requirements and coordinates stage execution.
 
 ## Prerequisites
@@ -49,9 +49,7 @@ A multi-stage AI workbench that routes and processes tasks across vision analysi
    cp .env.example .env
    ```
    Open `.env` and provide your API keys:
-   - `OPENROUTER_API_KEY`: OpenRouter API key
-   - `OPENROUTER_API_KEY_ALT`: Optional alternate OpenRouter key
-   - `OLLAMA_API_KEY`: Ollama Cloud API key
+   - `OLLAMA_API_KEY`: Optional key for an authenticated Ollama endpoint
 
 ## Usage
 
@@ -84,5 +82,5 @@ python knowledge.py --ingest "path/to/document.pdf"
 - `reasoning.py`: Web research, document RAG, and problem synthesis.
 - `coding.py`: Automated code generation.
 - `knowledge.py`: Document ingestion, chunking, and SQLite storage.
-- `llm.py`: Shared transport for OpenRouter calls.
+- `llm.py`: Shared local Ollama transport.
 - `config.py`: Centralized configuration, endpoints, and credentials loader.

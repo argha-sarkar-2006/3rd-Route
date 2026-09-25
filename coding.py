@@ -1,6 +1,6 @@
 """Coding stage - turn a reasoning result into working code.
 
-Runs on Ollama Cloud. The interactive chat from the original version is kept,
+Runs on the local Ollama daemon. The interactive chat from the original version is kept,
 and generate_code() is the entry point the router uses.
 """
 
@@ -8,7 +8,7 @@ import sys
 
 from ollama import Client
 
-import config 
+import config
 
 
 SYSTEM_PROMPT = """You are the coding stage of a private AI workbench.
@@ -38,10 +38,11 @@ class CodingError(RuntimeError):
 
 
 def _client():
-    return Client(
-        host=config.OLLAMA_HOST,
-        headers={"Authorization": f"Bearer {config.ollama_api_key()}"},
-    )
+    headers = {}
+    api_key = config.ollama_api_key()
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+    return Client(host=config.OLLAMA_HOST, headers=headers)
 
 
 def _build_prompt(problem_statement, language, summary):
@@ -120,7 +121,7 @@ def chat(user_input, messages=None):
 
 def main():
     print("=" * 60)
-    print("                 OLLAMA CLOUD CHATBOT")
+    print("                 LOCAL OLLAMA CHATBOT")
     print("=" * 60)
     print(f"\nModel: {config.CODING_MODEL}")
     print("Type 'exit' to stop. Type 'clear' to clear the conversation.\n")

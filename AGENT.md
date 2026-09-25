@@ -36,7 +36,7 @@ MMAR(off-chain)/
 ├── vision.py             # stage 1 — read an image, describe the problem
 ├── reasoning.py          # stage 2 — research, summarise, classify query vs code
 ├── coding.py             # stage 3 — turn a specification into working code
-├── llm.py                # shared OpenRouter transport (used by vision + reasoning)
+├── llm.py                # shared local Ollama transport (used by all stages)
 ├── knowledge.py          # shared local knowledge base (SQLite + FTS5) + PDF ingest
 ├── requirements.txt      # pinned direct dependencies
 ├── README.md             # user-facing setup and usage overview
@@ -60,7 +60,7 @@ MMAR(off-chain)/
 ### Standalone ingestion entrypoint
 
 `testrun.py` is a standalone ingestion-to-chat entry point, not imported by the
-model-router pipeline. It uses the shared knowledge database and OpenRouter client;
+model-router pipeline. It uses the shared knowledge database and local Ollama client;
 credentials are read from the environment rather than embedded in the script.
 
 ---
@@ -95,7 +95,7 @@ Every arrow below is a real call in the code.
                      ▼
             ┌────────────────────────────┐
             │       reasoning.py         │  ◄── knowledge.py (local FTS5 retrieval)
-            │  research → summarise →    │  ◄── OpenRouter web plugin (live search)
+            │  research → summarise →    │  ◄── local web-search adapter
             │  classify query vs code    │
             └────────┬───────────────────┘
                      │  {intent, summary, problem_statement, language, sources}
@@ -107,7 +107,7 @@ Every arrow below is a real call in the code.
           │                       │
           ▼                       ▼
    print the summary      ┌────────────────┐
-   + citations to the     │   coding.py    │  Ollama Cloud
+   + citations to the     │   coding.py    │  local Ollama
    terminal               │  spec → code   │  (gpt-oss:20b)
    (INTENT: QUERY)        └────────┬───────┘
                                    ▼
@@ -168,10 +168,9 @@ Keys are read **lazily through functions** so importing the module never fails
 because one unrelated key is missing. `_require(name)` raises a clear
 `RuntimeError` when a value is missing or still starts with `PASTE_`.
 
-Accessors: `openrouter_api_key()`, `openrouter_api_key_alt()`,
-`openrouter_api_keys()`, and `ollama_api_key()`. The plural accessor returns
-unique primary/alternate keys in order so a revoked key can fall through to the
-other configured key. Loads `.env` from the project root via `python-dotenv`.
+Accessor: `ollama_api_key()`. Local Ollama does not require a key; the value is
+used only when an authenticated Ollama endpoint is configured. Loads `.env` from
+the project root via `python-dotenv`.
 
 ### `vision.py` — stage 1
 
@@ -180,7 +179,7 @@ other configured key. Loads `.env` from the project root via `python-dotenv`.
 - Loads the image, checks the MIME type via `mimetypes`, rejects missing/empty files.
 - Inlines the bytes as a base64 data URL (no file upload — uploads leak and re-upload
   on every retry).
-- Walks `config.VISION_OPENROUTER_MODELS`, retrying retryable failures with
+- Calls `config.VISION_MODEL`, retrying retryable failures with
   exponential backoff and moving to the next model when one is retired.
 - `config.VISION_TOTAL_BUDGET_SECONDS` caps the whole stage so a saturated provider
   cannot retry forever.
@@ -213,7 +212,7 @@ Standalone CLI: `python vision.py <image> [-p PROMPT]`, or no argument for a REP
 `reason(prompt, image_description=None, use_web=True, use_knowledge=True, db_path=None, log=print) -> dict`
 
 Flow: retrieve knowledge-base context → build a system+user message → call the model
-with the OpenRouter web plugin → parse JSON → normalise.
+with local web-search results → parse JSON → normalise.
 
 Returns exactly these keys:
 
@@ -230,7 +229,7 @@ Returns exactly these keys:
 Robustness behaviours, each of which exists because of an observed failure:
 
 - `_parse_json` tolerates markdown fences and leading prose by falling back to the
-  outermost `{...}` span; parses with `strict=False` because OpenRouter responses
+  outermost `{...}` span; parses with `strict=False` because model responses
   routinely contain raw control characters inside JSON strings.
 - A response cut off at `finish_reason == "length"` is retried once with **2×** the
   token budget.
@@ -252,20 +251,18 @@ Standalone CLI: `python reasoning.py <prompt> [--image-description TEXT] [--no-w
 
 `generate_code(problem_statement, language="", summary="", model=None, log=print) -> str`
 
-Runs on Ollama Cloud via `ollama.Client(host=config.OLLAMA_HOST, headers={Authorization: Bearer ...})`.
+Runs on local Ollama via `ollama.Client(host=config.OLLAMA_HOST)`.
 The system prompt requires: a `FILE: name.py` line before the block, one fenced block
 with a complete program, no placeholder ellipses, all imports, a runnable entry point,
 and the ragged-data normalisation rule from §3.
 
 `chat()` / `main()` are a legacy interactive chatbot kept working, not used by the router.
 
-### `llm.py` — shared OpenRouter transport
+### `llm.py` — shared local Ollama transport
 
 - `data_url(data, mime_type)` — base64 data URL for inline images.
-- `openrouter_chat(messages, model, max_tokens=None, plugins=None, timeout=None)` —
-  POSTs to `config.OPENROUTER_URL`; retries HTTP 401/403 once with the configured
-  alternate key, then raises `LLMError` on authentication, timeout, transport,
-  other non-200, or unparseable JSON failures. Parses with `strict=False`.
+- `ollama_chat(messages, model, max_tokens=None, timeout=None)` — calls the local
+  Ollama daemon and raises `LLMError` on transport/model failures.
 - `extract_message(data) -> (text, finish_reason, annotations)` — **falls back to the
   `reasoning` field when `content` is empty**, because a reasoning model that exhausts
   its budget returns `content: null` with the text sitting in `reasoning`.
@@ -312,20 +309,17 @@ reasoning stage retrieves matching knowledge-base context for each chat request.
 | Stage | Model / service | Notes |
 | --- | --- | --- |
 | Router | `cactus-needle` (local package, imports as `needle`) | Not an API call. Telemetry disabled. |
-| Vision | `nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free` via OpenRouter | Free tier. The only configured vision model; no Gemini or provider fallback. |
-| Reasoning | `nex-agi/nex-n2.5-pro:free` via OpenRouter | Free tier, supports the `web` plugin. |
-| Coding | `gpt-oss:20b` on Ollama Cloud | `https://ollama.com`, Bearer auth. |
+| Knowledge gate | `qwen3.5:2b` via local Ollama | Answers only from local FTS5 excerpts. |
+| Vision | `qwen3.5:2b` via local Ollama | Multimodal local model. |
+| Reasoning | `qwen3.5:2b` via local Ollama | Receives local context and web-search results. |
+| Coding | `aikid123/qwen3-coder:0.6b` via local Ollama | Local coding model. |
 | Knowledge | local `knowledge.db` (SQLite + FTS5) | No network. |
 
 ### Vocabulary that bites
 
-- Vision uses one explicit free OpenRouter model; no other vision-provider SDK or
-  fallback path is configured.
-- A `:free` OpenRouter slug can 404 with *"unavailable for free… use this slug instead:
-  &lt;paid slug&gt;"*. That is a retired free tier, not a transient error.
-- The account's **free-model cap is 50 requests/day**; free vision models also hit
-  provider-side upstream limits ("Worker local total request limit reached") that have
-  nothing to do with this account.
+- All model stages use the local Ollama daemon; no cloud model provider is called.
+- Web search is best-effort and its results are injected into the local reasoning
+  prompt; a search failure does not stop the model response.
 
 ---
 
@@ -333,17 +327,16 @@ reasoning stage retrieves matching knowledge-base context for each chat request.
 
 | Constant | Value | Meaning |
 | --- | --- | --- |
-| `VISION_OPENROUTER_MODELS` | `["nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free"]` | Single free OpenRouter vision model. |
-| `REASONING_MODEL` | `nex-agi/nex-n2.5-pro:free` | |
-| `CODING_MODEL` | `gpt-oss:20b` | |
-| `OPENROUTER_URL` | `https://openrouter.ai/api/v1/chat/completions` | |
-| `OLLAMA_HOST` | `https://ollama.com` | |
-| `OPENROUTER_APP_TITLE` | `Sovereign AI Workbench` | Sent as `X-Title`. |
+| `KNOWLEDGE_MODEL` | `qwen3.5:2b` | Local knowledge gate. |
+| `VISION_MODEL` | `qwen3.5:2b` | Local multimodal vision model. |
+| `REASONING_MODEL` | `qwen3.5:2b` | Local reasoning model. |
+| `CODING_MODEL` | `aikid123/qwen3-coder:0.6b` | Local coding model. |
+| `OLLAMA_HOST` | `http://localhost:11434` | Fixed local daemon endpoint. |
 | `VISION_ATTEMPTS_PER_MODEL` | `2` | Retry attempts for the configured vision model. |
 | `VISION_BACKOFF_SECONDS` | `2.0` | Base for exponential backoff (`base × 2^(attempt-1)`). |
 | `VISION_TIMEOUT_SECONDS` | `150.0` | Per vision request. |
 | `VISION_TOTAL_BUDGET_SECONDS` | `360.0` | Hard ceiling on the whole vision stage. |
-| `OPENROUTER_TIMEOUT_SECONDS` | `180` | Default transport timeout (reasoning). |
+| `OLLAMA_TIMEOUT_SECONDS` | `180` | Default reasoning timeout. |
 | `LLM_MAX_TOKENS` | `16000` | Deliberately generous — reasoning models spend tokens on hidden thinking first. |
 | `KNOWLEDGE_DB` | `<root>/knowledge.db` | |
 
@@ -367,8 +360,8 @@ brew install tesseract      # required only for PDF/OCR ingestion
 ./test/bin/python3 -c "import needle, ollama, requests, dotenv; print('ok')"
 ```
 
-`.env` variables: `OPENROUTER_API_KEY`, `OPENROUTER_API_KEY_ALT`, and
-`OLLAMA_API_KEY`.
+`.env` variables: optional `OLLAMA_API_KEY` and model overrides; local Ollama
+normally runs without a key.
 
 ---
 
@@ -467,9 +460,9 @@ Legend: **[U]** unit, no network · **[L]** local, no network · **[N]** live ne
 | ID | Test | Command | Expected |
 | --- | --- | --- | --- |
 | TC-00.1 | All modules compile | `./test/bin/python3 -m py_compile modelrouter.py config.py vision.py reasoning.py coding.py llm.py knowledge.py` | exit 0 |
-| TC-00.2 | Vision configuration has no external SDK fallback | `./test/bin/python3 -c "import config; assert len(config.VISION_OPENROUTER_MODELS) == 1; assert config.VISION_OPENROUTER_MODELS[0].endswith(':free'); print('ok')"` | `ok` |
-| TC-00.3 | Config is importable without keys | `./test/bin/python3 -c "import config; print(config.VISION_OPENROUTER_MODELS)"` | prints the chain; does **not** raise even with `.env` absent |
-| TC-00.4 | Vision chain remains OpenRouter-only | `./test/bin/python3 -c "import config; assert not hasattr(config, 'gemini_api_key'); print('ok')"` | `ok` |
+| TC-00.2 | Local model configuration | `./test/bin/python3 -c "import config; assert config.VISION_MODEL == 'qwen3.5:2b'; print('ok')"` | `ok` |
+| TC-00.3 | Config is importable without keys | `./test/bin/python3 -c "import config; print(config.OLLAMA_HOST)"` | prints the local host; does **not** raise even without `.env` |
+| TC-00.4 | No OpenRouter configuration | `./test/bin/python3 -c "import config; assert not hasattr(config, 'OPENROUTER_URL'); print('ok')"` | `ok` |
 | TC-00.5 | Public signatures | `./test/bin/python3 -c "import vision,reasoning,coding,inspect; print(inspect.signature(vision.analyze_image)); print(inspect.signature(reasoning.reason)); print(inspect.signature(coding.generate_code))"` | matches §4 |
 | TC-00.6 | Vision configuration regression test | `./test/bin/python3 -m unittest tests/test_vision_configuration.py` | `OK` |
 
@@ -546,7 +539,7 @@ PY
 | TC-03.5 | Vision rejects a missing file | `./test/bin/python3 vision.py nope.jpeg` | `VisionError: Image file does not exist` | none |
 | TC-03.6 | Reasoning, query path | `./test/bin/python3 reasoning.py "what is the latest Python release?"` | `INTENT: QUERY`, a summary, and real `SOURCES` URLs | free |
 | TC-03.7 | Reasoning, code path | `./test/bin/python3 reasoning.py "write a python script to solve a word search"` | `INTENT: CODE` and a non-empty `PROBLEM STATEMENT` | free |
-| TC-03.8 | Reasoning survives a transport failure | monkeypatch `llm.openrouter_chat` to raise `llm.LLMError` | raises `ReasoningError` (not a bare `LLMError`) — the router only catches the former | none |
+| TC-03.8 | Reasoning survives a transport failure | monkeypatch `llm.ollama_chat` to raise `llm.LLMError` | raises `ReasoningError` (not a bare `LLMError`) — the router only catches the former | none |
 | TC-03.9 | Reasoning off-web | add `--no-web` to TC-03.6 | still returns a summary, with no/zero sources | free |
 | TC-03.10 | Coding generates code | `./test/bin/python3 -c "import coding; print(coding.generate_code('write a function that reverses a string', 'python')[:200])"` | code containing `def`, no `...` placeholders | paid-ish |
 
@@ -576,9 +569,8 @@ PY
 ## 11. Known issues and gotchas
 
 1. **Leaked keys in git history (open).** Older repository history may contain
-   OpenRouter keys. Moving keys into `.env` does not un-expose history. **Rotate any
-   exposed keys on the OpenRouter dashboard**; history rewriting is a separate,
-   destructive operation and is not part of this repo's current state.
+   provider keys. Moving keys into `.env` does not un-expose history. Rotate any
+   exposed keys; history rewriting is separate and destructive.
 2. **Free-tier quota.** 50 requests/day across free models, plus provider-side
    upstream limits that are outside this account's control. Live tests can fail for
    environmental reasons; check the error text before assuming a code defect.
@@ -602,4 +594,4 @@ PY
   key present. Only an actual API call raises.
 - The knowledge base is local-only; nothing in `knowledge.py` makes a network request.
 - `user prompt → model` is the only path by which arbitrary text reaches a provider.
-  Image bytes go to OpenRouter as an inline data URL.
+  Image bytes go directly to the local Ollama vision model.

@@ -1,8 +1,7 @@
 """Vision stage - read an image with a vision model and describe the problem it poses.
 
-Reads go through OpenRouter's image endpoint using the free model configured in
-``config.VISION_OPENROUTER_MODELS``. There is no provider fallback outside that
-explicit OpenRouter model list.
+Reads go through the local Ollama multimodal model configured in
+``config.VISION_MODEL``. No cloud provider is contacted.
 
 Retryable failures are retried with backoff before the next model is tried.
 """
@@ -121,23 +120,16 @@ def _load_image(image_path):
 
 
 def _read_with_model(model, data, mime_type, prompt):
-    """Send the image to a model through OpenRouter and return its text."""
+    """Send the image to a local Ollama model and return its text."""
     messages = [
         {
             "role": "user",
-            "content": [
-                {"type": "text", "text": prompt},
-                {
-                    "type": "image_url",
-                    "image_url": {"url": llm.data_url(data, mime_type)},
-                },
-            ],
+            "content": prompt,
+            "images": [data],
         }
     ]
 
-    body = llm.openrouter_chat(
-        messages, model=model, timeout=config.VISION_TIMEOUT_SECONDS
-    )
+    body = llm.ollama_chat(messages, model=model)
 
     text, finish, _ = llm.extract_message(body)
 
@@ -162,7 +154,7 @@ def analyze_image(image_path, prompt=None, log=print):
     failures = []
     deadline = time.monotonic() + config.VISION_TOTAL_BUDGET_SECONDS
 
-    for model in config.VISION_OPENROUTER_MODELS:
+    for model in (config.VISION_MODEL,):
         if time.monotonic() >= deadline:
             message = (
                 f"{model}: skipped, stage budget "
@@ -235,7 +227,7 @@ def main():
     print("       SOVEREIGN AI WORKBENCH")
     print("              VISION")
     print("=" * 60)
-    print(f"\nChain: {' -> '.join(config.VISION_OPENROUTER_MODELS)}")
+    print(f"\nModel: {config.VISION_MODEL}")
 
     if args.image:
         print(f"\nAnalysing {args.image}...\n")
