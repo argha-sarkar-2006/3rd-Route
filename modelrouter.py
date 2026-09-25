@@ -42,7 +42,7 @@ DEFAULT_IMAGE_PROMPT = (
 @needle.tool
 def select_model(task_type: Literal["coding", "reasoning", "vision"]):
     """
-    Select the correct AI model for the user's task.
+    Select the correct AI model  for the user's task.
 
     Args:
         task_type:

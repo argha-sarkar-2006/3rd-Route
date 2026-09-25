@@ -8,7 +8,7 @@ import sys
 
 from ollama import Client
 
-import config
+import config 
 
 
 SYSTEM_PROMPT = """You are the coding stage of a private AI workbench.

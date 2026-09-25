@@ -10,7 +10,7 @@ import config
 
 class LLMError(RuntimeError):
     """Raised when an OpenRouter request could not be completed."""
-
+ 
 
 def data_url(data, mime_type):
     """Encode raw image bytes as an inline data URL OpenRouter accepts."""
