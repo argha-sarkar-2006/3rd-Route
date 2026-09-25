@@ -1,0 +1,24 @@
+# Direct dependencies, pinned to the versions verified in the test/ venv
+# (Python 3.14.7):
+#   ./test/bin/pip install -r requirements.txt
+#
+# pytesseract is only a wrapper around the `tesseract` binary, which pip cannot
+# install. It must be on the PATH or PDF ingestion fails. On macOS:
+#   brew install tesseract
+
+# reasoning stage - OpenRouter transport
+requests==2.34.2
+
+# coding stage - Ollama Cloud
+ollama==0.6.2
+
+# request router
+cactus-needle==3.0.2
+
+# knowledge base - PDF text extraction and OCR
+PyMuPDF==1.28.2
+pytesseract==0.3.13
+Pillow==12.3.0
+
+# config - .env loading
+python-dotenv==1.2.3
